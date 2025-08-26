@@ -1,0 +1,188 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "playbookName": {
+      "type": "string",
+      "defaultValue": "Sentinel-IoC-To-Defender-Block",
+      "metadata": {
+        "description": "Name of the Sentinel Playbook (Logic App)."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for the playbook."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('playbookName')]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "definition": {
+          "$schema": "https://schema.management.azure.com/schemas/2016-06-01/Microsoft.Logic.json",
+          "contentVersion": "1.0.0.0",
+          "parameters": {},
+          "triggers": {
+            "When_a_response_to_a_Sentinel_alert_is_triggered": {
+              "type": "Request",
+              "kind": "Http",
+              "inputs": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "actions": {
+            "Initialize_indicators": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "indicators",
+                    "type": "Array",
+                    "value": []
+                  }
+                ]
+              },
+              "runAfter": {}
+            },
+            "For_each_entity": {
+              "type": "Foreach",
+              "foreach": "@triggerBody()?['entities']",
+              "actions": {
+                "Switch_on_entityType": {
+                  "type": "Switch",
+                  "expression": "@item()?['kind']",
+                  "cases": {
+                    "Case_Ip": {
+                      "case": "Ip",
+                      "actions": {
+                        "Append_IP": {
+                          "type": "AppendToArrayVariable",
+                          "inputs": {
+                            "name": "indicators",
+                            "value": {
+                              "action": "block",
+                              "description": "@{concat('From Sentinel incident ', triggerBody()?['properties']?['incidentNumber'])}",
+                              "expirationDateTime": "@{addDays(utcNow(),90)}",
+                              "targetProduct": "Microsoft Defender ATP",
+                              "threatType": "WatchList",
+                              "tlpLevel": "green",
+                              "networkDestinationIPv4": "@{item()?['properties']?['Address']}"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "Case_Url": {
+                      "case": "Url",
+                      "actions": {
+                        "Append_URL": {
+                          "type": "AppendToArrayVariable",
+                          "inputs": {
+                            "name": "indicators",
+                            "value": {
+                              "action": "block",
+                              "description": "@{concat('From Sentinel incident ', triggerBody()?['properties']?['incidentNumber'])}",
+                              "expirationDateTime": "@{addDays(utcNow(),90)}",
+                              "targetProduct": "Microsoft Defender ATP",
+                              "threatType": "WatchList",
+                              "tlpLevel": "green",
+                              "url": "@{item()?['properties']?['Url']}"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "Case_Domain": {
+                      "case": "DnsDomain",
+                      "actions": {
+                        "Append_Domain": {
+                          "type": "AppendToArrayVariable",
+                          "inputs": {
+                            "name": "indicators",
+                            "value": {
+                              "action": "block",
+                              "description": "@{concat('From Sentinel incident ', triggerBody()?['properties']?['incidentNumber'])}",
+                              "expirationDateTime": "@{addDays(utcNow(),90)}",
+                              "targetProduct": "Microsoft Defender ATP",
+                              "threatType": "WatchList",
+                              "tlpLevel": "green",
+                              "domainName": "@{item()?['properties']?['DomainName']}"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "Case_FileHash": {
+                      "case": "FileHash",
+                      "actions": {
+                        "Append_Hash": {
+                          "type": "AppendToArrayVariable",
+                          "inputs": {
+                            "name": "indicators",
+                            "value": {
+                              "action": "block",
+                              "description": "@{concat('From Sentinel incident ', triggerBody()?['properties']?['incidentNumber'])}",
+                              "expirationDateTime": "@{addDays(utcNow(),90)}",
+                              "targetProduct": "Microsoft Defender ATP",
+                              "threatType": "WatchList",
+                              "tlpLevel": "green",
+                              "fileHashValue": "@{item()?['properties']?['Value']}",
+                              "fileHashType": "@{toLower(item()?['properties']?['Algorithm'])}"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "default": {
+                    "actions": {}
+                  }
+                }
+              },
+              "runAfter": {
+                "Initialize_indicators": [
+                  "Succeeded"
+                ]
+              }
+            },
+            "Submit_to_Graph": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "https://graph.microsoft.com/beta/security/tiIndicators/submitTiIndicators",
+                "headers": {
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "value": "@variables('indicators')"
+                },
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "audience": "https://graph.microsoft.com"
+                }
+              },
+              "runAfter": {
+                "For_each_entity": [
+                  "Succeeded"
+                ]
+              }
+            }
+          },
+          "outputs": {}
+        }
+      }
+    }
+  ]
+}
